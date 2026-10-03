@@ -1,0 +1,34 @@
+# flare — bucket + image access, the clean component.
+# Deploy: npx wrangler deploy        (-> https://flare.tangent.workers.dev)
+# Dev:    npx wrangler dev
+#
+# One secret to set (same name/value as the old api component uses):
+#   npx wrangler secret put CLOUDFLARE_IMAGE_TOKEN   # Images API bearer token
+
+name = "flare"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+
+[observability]
+enabled = true
+
+# One binding per bucket — the binding name IS the ?bucket= value the
+# clients send, and BUCKETS below is the fence that lets it through.
+[[r2_buckets]]
+binding = "BUCKET1"
+bucket_name = "bucket1"
+
+[[r2_buckets]]
+binding = "BUCKET2"
+bucket_name = "bucket2"
+
+[[r2_buckets]]
+binding = "REPORTBASE"
+bucket_name = "reportbase"
+
+[vars]
+BUCKETS = "BUCKET1,BUCKET2,REPORTBASE"
+ALLOWED_ORIGINS = "https://tangent.fit"   # origins allowed to POST/DELETE
+ALLOWED_WRITE_IPS = ""                    # comma list of IPs allowed to POST/DELETE; empty = no IP gate
+CLOUDFLARE_ACCOUNT_HASH = "w9Lvwo1EAmYzHfbI5TkJ7g"    # imagedelivery.net/<this>/<image_id>/<variant>
+CLOUDFLARE_ID = "41f6f507a22c7eec431dbc5e9670c73d"   # account id, for the Images API routes
