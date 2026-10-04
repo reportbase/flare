@@ -29,7 +29,7 @@ binding = "REPORTBASE"
 bucket_name = "reportbase"
 
 [vars]
-BUCKETS = "BUCKET1,BUCKET2,REPORTBASE"
+BUCKETS = "BUCKET1,BUCKET2,SVG,REPORTBASE"
 ALLOWED_ORIGINS = "https://tangent.fit"   # browser pages that may still POST/DELETE without the token…
 ALLOW_ORIGIN_WRITES = "true"              # …while this is "true". Set "false" once they send the token too.
 ALLOWED_WRITE_IPS = ""                    # comma list of IPs allowed to POST/DELETE; empty = no IP gate
