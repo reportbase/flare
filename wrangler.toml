@@ -2,8 +2,10 @@
 # Deploy: npx wrangler deploy        (-> https://flare.tangent.workers.dev)
 # Dev:    npx wrangler dev
 #
-# One secret to set (same name/value as the old api component uses):
-#   npx wrangler secret put CLOUDFLARE_IMAGE_TOKEN   # Images API bearer token
+# Two secrets to set:
+#   npx wrangler secret put CLOUDFLARE_IMAGE_TOKEN   # Images API bearer token (same as the old api component)
+#   npx wrangler secret put WRITE_TOKEN              # what an upload or delete must present:
+#                                                    #   Authorization: Bearer <WRITE_TOKEN>
 
 name = "flare"
 main = "worker.js"
@@ -28,7 +30,8 @@ bucket_name = "reportbase"
 
 [vars]
 BUCKETS = "BUCKET1,BUCKET2,REPORTBASE"
-ALLOWED_ORIGINS = "https://tangent.fit"   # origins allowed to POST/DELETE
+ALLOWED_ORIGINS = "https://tangent.fit"   # browser pages that may still POST/DELETE without the token…
+ALLOW_ORIGIN_WRITES = "true"              # …while this is "true". Set "false" once they send the token too.
 ALLOWED_WRITE_IPS = ""                    # comma list of IPs allowed to POST/DELETE; empty = no IP gate
 CLOUDFLARE_ACCOUNT_HASH = "w9Lvwo1EAmYzHfbI5TkJ7g"    # imagedelivery.net/<this>/<image_id>/<variant>
 CLOUDFLARE_ID = "41f6f507a22c7eec431dbc5e9670c73d"   # account id, for the Images API routes
