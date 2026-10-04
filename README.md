@@ -21,7 +21,7 @@ GitHub Pages.
 | `GET /image?blob=ID` | The original image, via the Images API |
 | `GET /image?meta=ID` | Image metadata, via the Images API |
 
-Bucket names are `BUCKET1`, `BUCKET2` and `REPORTBASE`. Only names listed in
+Bucket names are `BUCKET1`, `BUCKET2`, `SVG` and `REPORTBASE`. Only names listed in
 `BUCKETS` in `wrangler.toml` are reachable.
 
 **Reads** are open to any site. **Writes** (POST and DELETE) need permission,
