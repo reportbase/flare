@@ -28,6 +28,10 @@ bucket_name = "bucket2"
 binding = "REPORTBASE"
 bucket_name = "reportbase"
 
+[[r2_buckets]]
+binding = "SVG"
+bucket_name = "svg"
+
 [vars]
 BUCKETS = "BUCKET1,BUCKET2,SVG,REPORTBASE"
 ALLOWED_ORIGINS = "https://tangent.fit"   # browser pages that may still POST/DELETE without the token…
