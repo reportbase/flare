@@ -3,9 +3,11 @@
 #   ./test.sh                          # against the deployed component
 #   BASE=http://localhost:8787 ./test.sh   # against wrangler dev
 #   IMAGE_ID=ca8c5348-1541-4627-ec17-61970cd7aa00 ./test.sh            # also test the /image routes
+#   WRITE_TOKEN=... ./test.sh          # the write checks need the Worker's write token
 set -u
 BASE="${BASE:-https://flare.tangent.workers.dev}"
 BUCKET="${BUCKET:-BUCKET1}"
+AUTH=(-H "Authorization: Bearer ${WRITE_TOKEN:-}")
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); printf '  pass  %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$1"; }
@@ -36,13 +38,21 @@ curl -sI "$BASE/bucket?bucket=$BUCKET" | grep -qi '^access-control-allow-origin:
 echo "· writes"
 TKEY="test/flare-test-$$.txt"
 echo "flare test $$" > /tmp/flare-test.txt
-curl -s -X POST "$BASE/bucket?bucket=$BUCKET&key=$TKEY" -F "file=@/tmp/flare-test.txt" | grep -q '"success": *true' \
-  && ok "upload" || bad "upload (IP fence armed and you are not on it?)"
-curl -s "$BASE/bucket?bucket=$BUCKET&key=$TKEY" | grep -q "flare test $$" && ok "round-trip content" || bad "round-trip content"
-[ "$(code -X POST "$BASE/bucket?bucket=$BUCKET&key=$TKEY" -F "file=@/tmp/flare-test.txt" -H 'Origin: https://evil.example')" = 403 ] \
-  && ok "foreign origin -> 403" || bad "foreign origin not rejected"
-curl -s -X DELETE "$BASE/bucket?bucket=$BUCKET&key=$TKEY" | grep -q '"success": *true' && ok "delete" || bad "delete"
-[ "$(code "$BASE/bucket?bucket=$BUCKET&key=$TKEY")" = 404 ] && ok "deleted is gone" || bad "deleted still present"
+[ "$(code -X POST "$BASE/bucket?bucket=$BUCKET&key=$TKEY" -F "file=@/tmp/flare-test.txt")" = 403 ] \
+  && ok "no token -> 403" || bad "an upload without the token was not refused"
+[ "$(code -X POST "$BASE/bucket?bucket=$BUCKET&key=$TKEY" -F "file=@/tmp/flare-test.txt" -H 'Authorization: Bearer wrong')" = 403 ] \
+  && ok "wrong token -> 403" || bad "an upload with a wrong token was not refused"
+if [ -n "${WRITE_TOKEN:-}" ]; then
+  curl -s -X POST "$BASE/bucket?bucket=$BUCKET&key=$TKEY" "${AUTH[@]}" -F "file=@/tmp/flare-test.txt" | grep -q '"success": *true' \
+    && ok "upload with the token" || bad "upload with the token (IP fence armed and you are not on it?)"
+  curl -s "$BASE/bucket?bucket=$BUCKET&key=$TKEY" | grep -q "flare test $$" && ok "round-trip content" || bad "round-trip content"
+  [ "$(code -X POST "$BASE/bucket?bucket=$BUCKET&key=$TKEY" -F "file=@/tmp/flare-test.txt" -H 'Origin: https://evil.example')" = 403 ] \
+    && ok "foreign origin -> 403" || bad "foreign origin not rejected"
+  curl -s -X DELETE "$BASE/bucket?bucket=$BUCKET&key=$TKEY" "${AUTH[@]}" | grep -q '"success": *true' && ok "delete with the token" || bad "delete"
+  [ "$(code "$BASE/bucket?bucket=$BUCKET&key=$TKEY")" = 404 ] && ok "deleted is gone" || bad "deleted still present"
+else
+  echo "  skip  set WRITE_TOKEN=... to test uploading and deleting"
+fi
 
 echo "· images"
 if [ -n "${IMAGE_ID:-}" ]; then

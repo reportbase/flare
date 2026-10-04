@@ -1,8 +1,9 @@
 // Unit tests for worker.js, run with Node's own test runner (no install, no
 // Cloudflare account): the R2 buckets are an in-memory stand-in and outside
 // fetches (the Images API, the delivery CDN) are stubbed. They check the
-// contract the clients rely on, the bucket fence, CORS, the write gates, all
-// three upload modes, paged listing, and the /image routes.
+// contract the clients rely on: the bucket fence, CORS, the write gates (the
+// token, allowed sites, the IP fence), all three upload modes, paged listing,
+// and the /image routes.
 //
 //   npm test          (or: node --test)
 //
@@ -56,6 +57,8 @@ beforeEach(() => {
     BUCKETS: 'BUCKET1,BUCKET2',
     ALLOWED_ORIGINS: ORIGIN,
     ALLOWED_WRITE_IPS: '',
+    ALLOW_ORIGIN_WRITES: 'true',
+    WRITE_TOKEN: 'test-write-token',
     CLOUDFLARE_ACCOUNT_HASH: 'HASH',
     CLOUDFLARE_ID: 'ACCOUNT',
     CLOUDFLARE_IMAGE_TOKEN: 'TOKEN',
@@ -65,7 +68,12 @@ beforeEach(() => {
 });
 afterEach(() => { globalThis.fetch = realFetch; });
 
-const call = (path, init = {}) => worker.fetch(new Request('https://flare.test' + path, init), env);
+/* Writes carry the token unless a test says otherwise (auth: false, or its own Authorization). */
+const call = (path, init = {}) => {
+  const { auth = true, ...rest } = init, headers = new Headers(rest.headers || {});
+  if (auth && /^(POST|DELETE)$/.test(rest.method || '') && !headers.has('Authorization')) headers.set('Authorization', 'Bearer test-write-token');
+  return worker.fetch(new Request('https://flare.test' + path, { ...rest, headers }), env);
+};
 const body = r => r.json();
 
 /* ── Fence ── */
@@ -140,16 +148,49 @@ test('preflight is 204', async () => {
 });
 
 /* ── Write gates ── */
+test('no token: refused, whoever asks', async () => {
+  await env.BUCKET1.put('keep', 'x');
+  for (const headers of [{}, { Origin: 'https://evil.example' }]){
+    assert.equal((await call('/bucket?bucket=BUCKET1&key=new', { method: 'POST', body: 'x', headers, auth: false })).status, 403);
+    assert.equal((await call('/bucket?bucket=BUCKET1&key=keep', { method: 'DELETE', headers, auth: false })).status, 403);
+  }
+  assert.ok(env.BUCKET1.store.has('keep'));
+  assert.ok(!env.BUCKET1.store.has('new'));
+  const r = await call('/bucket?bucket=BUCKET1&key=new', { method: 'POST', body: 'x', auth: false });
+  assert.match((await r.json()).error, /token/);
+});
+
+test('a wrong token is refused, the right one works from anywhere', async () => {
+  const wrong = await call('/bucket?bucket=BUCKET1&key=k', { method: 'POST', body: 'x', headers: { Authorization: 'Bearer nope' } });
+  assert.equal(wrong.status, 403);
+  const right = await call('/bucket?bucket=BUCKET1&key=k', { method: 'POST', body: 'x', headers: { Origin: 'https://reportbase.github.io' } });
+  assert.equal(right.status, 200);
+  assert.equal((await call('/bucket?bucket=BUCKET1&key=k', { method: 'DELETE' })).status, 200);
+});
+
+test('no token configured: a token cannot be guessed as empty', async () => {
+  delete env.WRITE_TOKEN;
+  assert.equal((await call('/bucket?bucket=BUCKET1&key=k', { method: 'POST', body: 'x', headers: { Authorization: 'Bearer ' } })).status, 403);
+  assert.equal((await call('/bucket?bucket=BUCKET1&key=k', { method: 'POST', body: 'x', headers: { Authorization: 'Bearer undefined' } })).status, 403);
+});
+
+test('an allowed site may write without the token until ALLOW_ORIGIN_WRITES is "false"', async () => {
+  const send = () => call('/bucket?bucket=BUCKET1&key=k', { method: 'POST', body: 'x', headers: { Origin: ORIGIN }, auth: false });
+  assert.equal((await send()).status, 200);
+  env.ALLOW_ORIGIN_WRITES = 'false';
+  assert.equal((await send()).status, 403);
+});
+
 test('a foreign origin cannot write or delete', async () => {
   await env.BUCKET1.put('keep', 'x');
-  const post = await call('/bucket?bucket=BUCKET1&key=k', { method: 'POST', body: 'x', headers: { Origin: 'https://evil.example' } });
+  const post = await call('/bucket?bucket=BUCKET1&key=k', { method: 'POST', body: 'x', headers: { Origin: 'https://evil.example' }, auth: false });
   assert.equal(post.status, 403);
-  const del = await call('/bucket?bucket=BUCKET1&key=keep', { method: 'DELETE', headers: { Origin: 'https://evil.example' } });
+  const del = await call('/bucket?bucket=BUCKET1&key=keep', { method: 'DELETE', headers: { Origin: 'https://evil.example' }, auth: false });
   assert.equal(del.status, 403);
   assert.ok(env.BUCKET1.store.has('keep'));
 });
 
-test('the IP fence, when set, refuses other addresses', async () => {
+test('the IP fence, when set, refuses other addresses even with the token', async () => {
   env.ALLOWED_WRITE_IPS = '1.2.3.4';
   const no = await call('/bucket?bucket=BUCKET1&key=k', { method: 'POST', body: 'x', headers: { 'CF-Connecting-IP': '9.9.9.9' } });
   assert.equal(no.status, 403);

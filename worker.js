@@ -22,8 +22,9 @@
  *     env also holds secrets, and the old 404 listed the bindings to anyone.
  *   - Listing walks the cursor: a bucket past 1000 objects no longer
  *     silently truncates. `truncated: false` kept for shape compatibility.
- *   - Writes (POST/DELETE) are origin-gated server-side by ALLOWED_ORIGINS.
- *     The old component had no write protection at all.
+ *   - Writes (POST/DELETE) need the WRITE_TOKEN secret, or (during the move to
+ *     it) a browser page on ALLOWED_ORIGINS. The old component had no write
+ *     protection at all. See writeDenied().
  *   - /image drops the D1 decorations (X-User-ID header, user join on meta)
  *     and analytics logging — publish-world concerns. No DATABASE binding.
  *   - CORS policy is decided in one function, not spread across handlers.
@@ -31,7 +32,8 @@
  * Config (wrangler.toml + secrets):
  *   R2 bindings BUCKET1/BUCKET2/REPORTBASE; BUCKETS fence; ALLOWED_ORIGINS.
  *   CLOUDFLARE_ACCOUNT_HASH, CLOUDFLARE_ID (vars — in wrangler.toml).
- *   CLOUDFLARE_IMAGE_TOKEN (the one secret — the Images API bearer).
+ *   CLOUDFLARE_IMAGE_TOKEN (the Images API bearer) and WRITE_TOKEN (what a
+ *   write must present), both secrets. ALLOW_ORIGIN_WRITES (var).
  */
 
 /* ── CORS: one policy, one place ──────────────────────────────────────── */
@@ -251,29 +253,51 @@ async function handleImage(request, env, cors) {
   return fail('Missing required parameters. Use one of: image_id+v, meta, or blob', 400, cors);
 }
 
+/* ── Who may write ─────────────────────────────────────────────────────── */
+const list = v => (v || '').split(',').map(s => s.trim()).filter(Boolean);
+/* compare without stopping at the first difference, so the time taken says nothing
+   about how much of a guess was right */
+function sameSecret(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !b) return false;
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return diff === 0;
+}
+/* null when the write may go ahead, otherwise the reason it may not */
+function writeDenied(request, env) {
+  const ips = list(env.ALLOWED_WRITE_IPS);
+  if (ips.length && !ips.includes(request.headers.get('CF-Connecting-IP') || '')) return 'address not allowed to write';
+  const auth = request.headers.get('Authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  if (token) return sameSecret(token, env.WRITE_TOKEN) ? null : 'wrong write token';
+  const origin = request.headers.get('Origin');
+  if (origin && list(env.ALLOWED_ORIGINS).includes(origin) && String(env.ALLOW_ORIGIN_WRITES).toLowerCase() !== 'false') return null;
+  if (origin && !list(env.ALLOWED_ORIGINS).includes(origin)) return 'origin not allowed to write';
+  return 'writes need a token: Authorization: Bearer <WRITE_TOKEN>';
+}
+
 /* ── Router ───────────────────────────────────────────────────────────── */
 export default {
   async fetch(request, env) {
     const cors = corsHeaders(env, request.headers.get('Origin'));
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
-    /* Writes are gated server-side, which the old component never did.
-     * Two independent fences, each active only when its var is non-empty:
-     *   ALLOWED_ORIGINS    — browser pages must be on the list (no-Origin
-     *                        callers like curl pass this one).
-     *   ALLOWED_WRITE_IPS  — the caller's IP must be on the list, browser
-     *                        or not. CF-Connecting-IP is set by Cloudflare
-     *                        itself, so it cannot be spoofed by the client.
-     * Reads stay public: they serve anonymous image tags. */
+    /* WRITES NEED PERMISSION; READS STAY PUBLIC (they serve anonymous image tags).
+     * A write (POST or DELETE) is let through by either of:
+     *   the token   — `Authorization: Bearer <WRITE_TOKEN>`, the secret set with
+     *                 `wrangler secret put WRITE_TOKEN`. Scripts and tools use this.
+     *   the origin  — a browser page on ALLOWED_ORIGINS, while ALLOW_ORIGIN_WRITES
+     *                 is not "false". This keeps the sites that already upload
+     *                 working while they move to the token. It is the weaker of the
+     *                 two: a browser sets Origin honestly, but any other client can
+     *                 claim one, so turn it off once nothing needs it.
+     * Everything else is refused, including the no-Origin callers (curl, scripts)
+     * that the previous gate let through.
+     * ALLOWED_WRITE_IPS, when set, applies on top of both: the caller's address must
+     * be on it as well. CF-Connecting-IP is set by Cloudflare, not by the client. */
     if (request.method === 'POST' || request.method === 'DELETE') {
-      const origin = request.headers.get('Origin');
-      const writers = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-      if (origin && !writers.includes(origin)) return fail('origin not allowed to write', 403, cors);
-      const ips = (env.ALLOWED_WRITE_IPS || '').split(',').map(s => s.trim()).filter(Boolean);
-      if (ips.length) {
-        const ip = request.headers.get('CF-Connecting-IP') || '';
-        if (!ips.includes(ip)) return fail('address not allowed to write', 403, cors);
-      }
+      const denied = writeDenied(request, env);
+      if (denied) return fail(denied, 403, cors);
     }
 
     const url = new URL(request.url);
