@@ -88,5 +88,20 @@ npx wrangler secret put WRITE_TOKEN               # what uploads and deletes mus
 
 For `wrangler dev`, put both in a `.dev.vars` file (it's git-ignored).
 
-Merging to `main` does **not** deploy by itself. Run `npx wrangler deploy`
-after merging.
+### Deploying on merge
+
+Merging to `main` deploys automatically: the "Deploy" workflow in GitHub Actions
+runs the unit tests and then `wrangler deploy`. It needs one setting, made once:
+
+1. **Make a Cloudflare API token.** In the Cloudflare dashboard, go to **My
+   Profile → API Tokens → Create Token**. Use the **Edit Cloudflare Workers**
+   template, set **Account Resources** to your account and **Zone Resources** to
+   *All zones*, then **Continue to summary → Create Token**. Copy the token.
+2. **Give it to GitHub.** In this repo, go to **Settings → Secrets and variables
+   → Actions → New repository secret**. Name it `CLOUDFLARE_API_TOKEN`, paste
+   the token, and click **Add secret**.
+
+Until the token is set, merges skip the deploy with a warning. You can deploy
+from the **Actions** tab (Deploy → Run workflow) or by hand with
+`npx wrangler deploy`. Deploys leave the Worker's own secrets (`WRITE_TOKEN`,
+`CLOUDFLARE_IMAGE_TOKEN`) as they are.

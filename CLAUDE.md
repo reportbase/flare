@@ -4,10 +4,12 @@ The Cloudflare Worker at https://flare.tangent.workers.dev: reads and writes fil
 in R2 buckets and serves Cloudflare Images. games and draw read from it. The owner
 works through Claude Code: changes go on a branch, as a PR, and the owner merges.
 
-## Deploying is not automatic
-Merging to `main` changes nothing live. The owner deploys from their own computer
-with `npx wrangler deploy`, since it needs their Cloudflare login. After a change
-that matters, tell them it needs deploying.
+## Deploying happens on merge
+Merging to `main` deploys the Worker: the "Deploy" workflow runs the unit tests,
+then `wrangler deploy`, using the `CLOUDFLARE_API_TOKEN` repository secret. If
+that secret is missing, the deploy is skipped with a warning. The owner can still
+deploy by hand with `npx wrangler deploy`. A broken `main` is a broken live
+Worker, so run `npm test` before every PR.
 
 ## Files
 - `worker.js`: the whole Worker. It has two routes, `/bucket` and `/image`; the
